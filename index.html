@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Heavy Chain IK · Matter.js</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%231a0f08'/%3E%3Cpath d='M16 4 L16 28 M10 8 L22 8 M10 14 L22 14 M10 20 L22 20 M10 26 L22 26' stroke='%238b4513' stroke-width='2.5' fill='none'/%3E%3C/svg%3E">
+<style>
+  :root {
+    --rust: #8b4513;
+    --rust-dark: #3d1d0b;
+    --rust-deep: #1a0a02;
+    --wood: #a87844;
+    --wood-dark: #5a3920;
+    --bg-dark: #1a0f08;
+    --bg-light: #3d2817;
+    --bg-mid: #2b1d12;
+    --hud: rgba(255, 220, 180, 0.55);
+    --hud-bg: rgba(20, 12, 6, 0.65);
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    width: 100%; height: 100%;
+    overflow: hidden;
+    background:
+      radial-gradient(ellipse 80% 60% at 50% 0%, var(--bg-light) 0%, var(--bg-mid) 45%, var(--bg-dark) 100%);
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    color: var(--hud);
+    cursor: grab;
+    -webkit-font-smoothing: antialiased;
+  }
+  body.grabbing { cursor: grabbing; }
+  body.over-link { cursor: grab; }
+  #stage { position: fixed; inset: 0; }
+  #stage canvas { display: block; }
+  #hud {
+    position: fixed;
+    left: 18px; bottom: 18px;
+    padding: 10px 14px;
+    background: var(--hud-bg);
+    border: 1px solid rgba(255, 220, 180, 0.12);
+    border-radius: 6px;
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    line-height: 1.7;
+    pointer-events: none;
+    user-select: none;
+    backdrop-filter: blur(2px);
+  }
+  #hud .key {
+    display: inline-block;
+    min-width: 18px;
+    padding: 1px 6px;
+    margin-right: 6px;
+    background: rgba(255, 220, 180, 0.1);
+    border: 1px solid rgba(255, 220, 180, 0.22);
+    border-radius: 3px;
+    color: rgba(255, 220, 180, 0.85);
+    text-align: center;
+    font-size: 10px;
+  }
+  #title {
+    position: fixed;
+    top: 16px; left: 18px;
+    font-size: 11px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: rgba(255, 220, 180, 0.45);
+    pointer-events: none;
+    user-select: none;
+  }
+  #title b {
+    color: rgba(255, 220, 180, 0.85);
+    font-weight: 600;
+  }
+  #ts { display: none; }
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<div id="title"><b>Heavy Chain IK</b> · matter.js</div>
+<div id="hud">
+  <div><span class="key">drag</span>grab any link &amp; swing</div>
+  <div><span class="key">R</span>reset scene</div>
+  <div><span class="key">space</span>impulse on chain end</div>
+</div>
+<div id="ts">0</div>
+<script src="https://cdn.jsdelivr.net/npm/matter-js@0.20.0/build/matter.min.js"></script>
+<script>
+(() => {
+  'use strict';
+
+  // Matter.js modules
+  const { Engine, Render, Runner, Composite, Bodies, Body, Constraint,
+          MouseConstraint, Mouse, Events } = Matter;
+
+  // Viewport helpers
+  const W = () => window.innerWidth;
+  const H = () => window.innerHeight;
+
+  // Engine + tuning (per README "Design Choices" — heavy + damped)
+  const engine = Engine.create({
+    positionIterations: 8,
+    velocityIterations: 6
+  });
+  engine.gravity.y = 1; // default
+
+  // Renderer
+  const render = Render.create({
+    element: document.getElementById('stage'),
+    engine,
+    options: {
+      width: W(),
+      height: H(),
+      wireframes: false,
+      background: 'transparent',
+      pixelRatio: window.devicePixelRatio || 1
+    }
+  });
+  Render.run(render);
+  Runner.run(Runner.create(), engine);
+
+  // Resize: keep canvas full-viewport, Render follows
+  window.addEventListener('resize', () => {
+    render.canvas.width = W();
+    render.canvas.height = H();
+    render.options.width = W();
+    render.options.height = H();
+  });
+
+  // ───────────────────────── Named composites ─────────────────────────
+  const stageComp = Composite.create({ label: 'stage' });
+  const chainComp = Composite.create({ label: 'chain' });
+  const boxComp   = Composite.create({ label: 'boxes' });
+
+  // ───────────────────────── Constants ─────────────────────────
+  const N_LINKS    = 24;        // chain length (links)
+  const LINK_W     = 22;        // link width
+  const LINK_H     = 20;        // link height (along chain direction)
+  const LINK_GAP   = -3;        // small visual overlap so links read as continuous chain
+  const ANCHOR_Y   = 50;        // top of first link (just below the cleat)
+
+  // ───────────────────────── Static stage ─────────────────────────
+  function buildStage() {
+    Composite.clear(stageComp, false, true);
+    const wallOpts = {
+      isStatic: true,
+      render: { fillStyle: '#241710', strokeStyle: '#0e0805', lineWidth: 1 }
+    };
+    const cleatOpts = {
+      isStatic: true,
+      render: { fillStyle: '#5a2e0d', strokeStyle: '#1a0a02', lineWidth: 2 }
+    };
+    const ceilingOpts = {
+      isStatic: true,
+      render: { fillStyle: '#150b06' }
+    };
+
+    Composite.add(stageComp, [
+      // Floor (extra wide to avoid gaps on resize)
+      Bodies.rectangle(W() / 2, H() - 20, W() * 2.5, 40, wallOpts),
+      // Left wall
+      Bodies.rectangle(-20, H() / 2, 40, H() * 2.5, wallOpts),
+      // Right wall
+      Bodies.rectangle(W() + 20, H() / 2, 40, H() * 2.5, wallOpts),
+      // Visible cleat (the rust bolt the chain hangs from)
+      Bodies.rectangle(W() / 2, 28, 180, 18, cleatOpts),
+      // Two mounting bolts for cleat detail
+      Bodies.circle(W() / 2 - 70, 28, 5, Object.assign({}, cleatOpts, { render: { fillStyle: '#2a1408' } })),
+      Bodies.circle(W() / 2 + 70, 28, 5, Object.assign({}, cleatOpts, { render: { fillStyle: '#2a1408' } })),
+    ]);
+    Composite.add(engine.world, stageComp);
+  }
+
+  // ───────────────────────── Chain ─────────────────────────
+  function buildChain() {
+    Composite.clear(chainComp, false, true);
+
+    // Uniform links, stacked edge-to-edge with a small visual overlap so they
+    // read as a continuous chain segment rather than a ladder.
+    // Alternating dark/light tones + thicker dark stroke simulates rusty
+    // "iron band" rings without needing compound bodies.
+    // Collision filter: chain does NOT self-collide but DOES collide with boxes.
+    const baseLink = {
+      density: 0.05,        // per README: heavy
+      friction: 0.9,        // per README: rusty
+      frictionAir: 0.01,    // per README: damped "heavy" feel
+      restitution: 0.1,
+      collisionFilter: {
+        category: 0x0002,
+        mask: 0xFFFD        // collide with everything EXCEPT other chain links (0x0002)
+      }
+    };
+
+    const links = [];
+    let y = ANCHOR_Y;
+    const anchorX = W() / 2;
+
+    for (let i = 0; i < N_LINKS; i++) {
+      const odd = (i % 2 === 1);
+      const opts = Object.assign({}, baseLink, {
+        render: {
+          fillStyle:   odd ? '#5a2a0c' : '#a05818',
+          strokeStyle: '#1a0902',
+          lineWidth: 2.5
+        }
+      });
+      // Small horizontal jitter for "ironwork" feel
+      const jx = ((i * 41) % 5) - 2; // -2..+2 px
+      const link = Bodies.rectangle(anchorX + jx, y + LINK_H / 2, LINK_W, LINK_H, opts);
+      links.push(link);
+      y += LINK_H + LINK_GAP;
+    }
+
+    // Constraints
+    const constraints = [];
+
+    // Anchor: mount to a fixed point above the first link's top edge
+    constraints.push(Constraint.create({
+      pointA: { x: anchorX, y: ANCHOR_Y },
+      bodyB: links[0],
+      pointB: { x: 0, y: -LINK_H / 2 },
+      length: 0,
+      stiffness: 1,        // rigid mount
+      damping: 0.3,
+      render: { visible: false }
+    }));
+
+    // Inter-link: bottom of i ↔ top of i+1, with overlap so links visually fuse
+    const halfStep = (LINK_H + LINK_GAP) / 2;
+    for (let i = 0; i < links.length - 1; i++) {
+      constraints.push(Constraint.create({
+        bodyA: links[i],
+        pointA: { x: 0, y: halfStep },
+        bodyB: links[i + 1],
+        pointB: { x: 0, y: -halfStep },
+        length: 0,
+        stiffness: 0.7,    // flexible enough for visible IK sag
+        damping:   0.15,   // damped but not floppy
+        render: { visible: false }
+      }));
+    }
+
+    Composite.add(chainComp, [...links, ...constraints]);
+    Composite.add(engine.world, chainComp);
+    return { links, end: links[links.length - 1] };
+  }
+
+  // ───────────────────────── Wooden boxes (pyramid 3-2-1) ─────────────────────────
+  function buildBoxes() {
+    Composite.clear(boxComp, false, true);
+    const woodOpts = {
+      density: 0.002,
+      friction: 0.85,
+      frictionStatic: 1.0,
+      frictionAir: 0.012,
+      restitution: 0.1,
+      render: { fillStyle: '#a87844', strokeStyle: '#5a3920', lineWidth: 2 }
+    };
+    const woodPlankOpts = Object.assign({}, woodOpts, {
+      render: { fillStyle: '#b8854f', strokeStyle: '#5a3920', lineWidth: 2 }
+    });
+
+    const cx = W() / 2 + 150;  // chain swings right to hit this stack
+    const groundY = H() - 40;  // top of floor body
+
+    const boxes = [];
+
+    // Row 0 — three large boxes on the floor
+    const r0Y = groundY - 20;
+    const r0W = [120, 120, 120];
+    let x = cx - (r0W[0] + r0W[1] + r0W[2]) / 2 - 10;
+    for (let i = 0; i < 3; i++) {
+      boxes.push(Bodies.rectangle(x + r0W[i] / 2, r0Y, r0W[i], 40, woodOpts));
+      x += r0W[i] + 10;
+    }
+
+    // Row 1 — two medium boxes
+    const r1Y = r0Y - 40 - 2;
+    const r1W = [90, 90];
+    x = cx - r1W[0] / 2 - 5;
+    for (let i = 0; i < 2; i++) {
+      boxes.push(Bodies.rectangle(x + r1W[i] / 2, r1Y, r1W[i], 40, woodPlankOpts));
+      x += r1W[i] + 10;
+    }
+
+    // Row 2 — one small box on top
+    const r2Y = r1Y - 40 - 2;
+    boxes.push(Bodies.rectangle(cx, r2Y, 70, 40, woodPlankOpts));
+
+    Composite.add(boxComp, boxes);
+    Composite.add(engine.world, boxComp);
+    return boxes;
+  }
+
+  // ───────────────────────── Mouse interaction ─────────────────────────
+  const mouse = Mouse.create(render.canvas);
+  // Make mouse pixel-ratio aware (canvas may be scaled)
+  mouse.pixelRatio = window.devicePixelRatio || 1;
+
+  const mouseConstraint = MouseConstraint.create(engine, {
+    mouse,
+    constraint: {
+      stiffness: 0.12,   // moderate — chain follows cursor but with believable lag
+      damping: 0.12,
+      render: { visible: false }
+    }
+  });
+  Composite.add(engine.world, mouseConstraint);
+
+  // Cursor feedback
+  Events.on(mouseConstraint, 'startdrag', () => document.body.classList.add('grabbing'));
+  Events.on(mouseConstraint, 'enddrag',   () => document.body.classList.remove('grabbing'));
+
+  // ───────────────────────── World state + controls ─────────────────────────
+  let chain = buildChain();
+  buildStage();
+  buildBoxes();
+
+  function resetWorld() {
+    chain = buildChain();
+    buildBoxes();
+    // Stage is static — no rebuild needed
+  }
+
+  function applyImpulse() {
+    if (!chain || !chain.end) return;
+    const end = chain.end;
+    const m = end.mass;
+    // Lateral push, slight upward bias (chain then falls and swings)
+    Body.applyForce(end, end.position, { x: 0.04 * m, y: -0.005 * m });
+  }
+
+  window.addEventListener('keydown', (e) => {
+    if (e.code === 'KeyR' || e.code === 'Keyr') {
+      resetWorld();
+    } else if (e.code === 'Space') {
+      applyImpulse();
+      e.preventDefault();
+    }
+  });
+
+  // Block page scroll on Space when canvas is focused
+  render.canvas.addEventListener('wheel', (e) => e.preventDefault(), { passive: false });
+
+  // ───────────────────────── Engine liveness timestamp (for tests) ─────────────────────────
+  const tsEl = document.getElementById('ts');
+  Events.on(engine, 'afterUpdate', () => {
+    if (tsEl) tsEl.textContent = String(engine.timing.timestamp);
+  });
+
+  // ───────────────────────── Diagnostics on load (smoke check) ─────────────────────────
+  // Quiet — no console.log spam; dev can inspect `window.__sim` if needed.
+  window.__sim = {
+    engine, render, chain, mouseConstraint,
+    bodies: () => Composite.allBodies(engine.world).length,
+    constraints: () => Composite.allConstraints(engine.world).length,
+    chainEnd: () => chain && chain.end ? chain.end.position : null,
+    boxBodies: () => boxComp.bodies.map(b => ({
+      x: +b.position.x.toFixed(2), y: +b.position.y.toFixed(2),
+      a: +b.angle.toFixed(3),
+      vx: +b.velocity.x.toFixed(2), vy: +b.velocity.y.toFixed(2)
+    })),
+    chainLinkCount: () => chain ? chain.links.length : 0,
+    settleMetric: () => {
+      if (!chain) return 0;
+      let totalKE = 0;
+      for (const link of chain.links) {
+        totalKE += 0.5 * link.mass * (link.velocity.x ** 2 + link.velocity.y ** 2);
+      }
+      return +totalKE.toFixed(4);
+    }
+  };
+})();
+</script>
+</body>
+</html>
