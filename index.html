@@ -25,7 +25,7 @@
     overflow: hidden;
     background:
       radial-gradient(ellipse 80% 60% at 50% 0%, var(--bg-light) 0%, var(--bg-mid) 45%, var(--bg-dark) 100%);
-    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, "Apple SD Gothic Neo", "Noto Sans KR", "Nanum Gothic Coding", monospace;
     color: var(--hud);
     cursor: grab;
     -webkit-font-smoothing: antialiased;
@@ -67,6 +67,9 @@
     letter-spacing: 0.1em;
   }
   #audio-status:hover { opacity: 1; }
+  .lang-row { display: flex; align-items: center; }
+  .lang-row .key { cursor: pointer; user-select: none; }
+  .lang-row .key:hover { background: rgba(255, 220, 180, 0.2); }
   #title {
     position: fixed;
     top: 16px; left: 18px;
@@ -86,12 +89,13 @@
 </head>
 <body>
 <div id="stage"></div>
-<div id="title"><b>Heavy Chain IK</b> · matter.js</div>
+<div id="title" data-i18n-html="title"><b>헤비 체인 IK</b> · matter.js</div>
 <div id="hud">
-  <div><span class="key">drag</span>grab any link &amp; swing</div>
-  <div><span class="key">R</span>reset scene</div>
-  <div><span class="key">space</span>impulse on chain end</div>
-  <div id="audio-status" title="click to toggle sound">sound: on</div>
+  <div><span class="key">drag</span><span data-i18n="hud.drag">링크를 잡고 흔들기</span></div>
+  <div><span class="key">R</span><span data-i18n="hud.reset">리셋</span></div>
+  <div><span class="key">space</span><span data-i18n="hud.impulse">볼에 임펄스</span></div>
+  <div class="lang-row"><span class="key" id="lang-key" title="click or press L">L</span><span data-i18n="hud.lang">한/영 전환</span></div>
+  <div id="audio-status" data-i18n-title="hud.sound.title" data-i18n="hud.sound.on" title="클릭하여 사운드 토글">사운드: 켜짐</div>
 </div>
 <div id="ts">0</div>
 <script src="https://cdn.jsdelivr.net/npm/matter-js@0.20.0/build/matter.min.js"></script>
@@ -361,6 +365,93 @@
   Events.on(mouseConstraint, 'startdrag', () => document.body.classList.add('grabbing'));
   Events.on(mouseConstraint, 'enddrag',   () => document.body.classList.remove('grabbing'));
 
+  // ───────────────────────── i18n (Korean default + English) ─────────────────────────
+  // All visible UI text lives here. Use data-i18n="key" on any text node to wire it.
+  // data-i18n-html="key" for content with inline tags.
+  // data-i18n-title="key" for the `title` attribute.
+  // Default = Korean per request. Persists user choice in localStorage.
+  const i18n = {
+    ko: {
+      'title':            '<b>헤비 체인 IK</b>',
+      'hud.drag':         '링크를 잡고 흔들기',
+      'hud.reset':        '리셋',
+      'hud.impulse':      '볼에 임펄스',
+      'hud.lang':         '한/영 전환',
+      'hud.sound.on':     '사운드: 켜짐',
+      'hud.sound.off':    '사운드: 꺼짐',
+      'hud.sound.title':  '클릭하여 사운드 토글'
+    },
+    en: {
+      'title':            '<b>Heavy Chain IK</b>',
+      'hud.drag':         'grab any link & swing',
+      'hud.reset':        'reset scene',
+      'hud.impulse':      'impulse on ball',
+      'hud.lang':         '한/영 toggle',
+      'hud.sound.on':     'sound: on',
+      'hud.sound.off':    'sound: off',
+      'hud.sound.title':  'click to toggle sound'
+    }
+  };
+
+  const LANG_KEY = 'heavy-chain-ik.lang';
+  let currentLang = (() => {
+    try {
+      const saved = localStorage.getItem(LANG_KEY);
+      if (saved === 'ko' || saved === 'en') return saved;
+    } catch (_) {}
+    return 'ko';   // default per user request
+  })();
+
+  function t(key) {
+    return (i18n[currentLang] && i18n[currentLang][key]) || i18n.ko[key] || key;
+  }
+
+  function applyI18n() {
+    // Update document.title to match
+    const titleText = t('title').replace(/<[^>]+>/g, '');
+    document.title = titleText + ' · matter.js';
+
+    // Update data-i18n / data-i18n-html / data-i18n-title elements
+    document.querySelectorAll('[data-i18n]').forEach(el => {
+      const k = el.getAttribute('data-i18n');
+      el.textContent = t(k);
+    });
+    document.querySelectorAll('[data-i18n-html]').forEach(el => {
+      const k = el.getAttribute('data-i18n-html');
+      el.innerHTML = t(k);
+    });
+    document.querySelectorAll('[data-i18n-title]').forEach(el => {
+      const k = el.getAttribute('data-i18n-title');
+      el.title = t(k);
+    });
+
+    // Audio status depends on muted state + language
+    // (may not be ready yet if i18n runs before audio module is declared)
+    if (typeof audio !== 'undefined') refreshAudioStatus();
+  }
+
+  function refreshAudioStatus() {
+    const el = document.getElementById('audio-status');
+    if (!el) return;
+    el.textContent = t(audio && audio.muted ? 'hud.sound.off' : 'hud.sound.on');
+  }
+
+  function setLang(lang) {
+    if (lang !== 'ko' && lang !== 'en') return;
+    if (lang === currentLang) return;
+    currentLang = lang;
+    try { localStorage.setItem(LANG_KEY, lang); } catch (_) {}
+    applyI18n();
+  }
+
+  function toggleLang() {
+    setLang(currentLang === 'ko' ? 'en' : 'ko');
+  }
+
+  // NOTE: initial applyI18n() runs at the very end of the IIFE
+  // (after all sibling modules like `audio` are declared) so the
+  // audio-status text gets localized on first paint.
+
   // ───────────────────────── Sound (Web Audio API) ─────────────────────────
   // Procedural clank (metal) + thud (wood) — no audio assets needed.
   // Browsers require a user gesture before AudioContext can play; we init lazily.
@@ -384,8 +475,7 @@
     },
     setMuted(m) {
       this.muted = m;
-      const el = document.getElementById('audio-status');
-      if (el) el.textContent = m ? 'sound: off' : 'sound: on';
+      refreshAudioStatus();
     },
     // Metallic clank: short noise burst through a bandpass filter centered ~2-3 kHz
     clank(intensity) {
@@ -448,6 +538,16 @@
       e.stopPropagation();
       audio.resume();
       audio.setMuted(!audio.muted);
+    });
+  }
+
+  // HUD: clickable L key — toggles language
+  const langKeyEl = document.getElementById('lang-key');
+  if (langKeyEl) {
+    langKeyEl.style.pointerEvents = 'auto';
+    langKeyEl.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleLang();
     });
   }
 
@@ -566,6 +666,9 @@
     } else if (e.code === 'Space') {
       applyImpulse();
       e.preventDefault();
+    } else if (e.code === 'KeyL' || e.code === 'Keyl') {
+      toggleLang();
+      e.preventDefault();
     }
   });
 
@@ -579,6 +682,9 @@
   });
 
   // ───────────────────────── Diagnostics on load (smoke check) ─────────────────────────
+  // Re-apply i18n now that audio is defined (audio-status text needs it).
+  applyI18n();
+
   // Quiet — no console.log spam; dev can inspect `window.__sim` if needed.
   window.__sim = {
     engine, render, chain, mouseConstraint, audio,
@@ -602,7 +708,10 @@
       return +totalKE.toFixed(4);
     },
     particles: () => particles.length,
-    audioStatus: () => ({ enabled: audio.enabled, muted: audio.muted })
+    audioStatus: () => ({ enabled: audio.enabled, muted: audio.muted }),
+    lang: () => currentLang,
+    setLang: (l) => setLang(l),
+    i18nText: (k) => t(k)
   };
 })();
 </script>
