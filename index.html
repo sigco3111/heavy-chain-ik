@@ -60,6 +60,13 @@
     text-align: center;
     font-size: 10px;
   }
+  #audio-status {
+    margin-top: 4px;
+    opacity: 0.7;
+    font-size: 10px;
+    letter-spacing: 0.1em;
+  }
+  #audio-status:hover { opacity: 1; }
   #title {
     position: fixed;
     top: 16px; left: 18px;
@@ -84,6 +91,7 @@
   <div><span class="key">drag</span>grab any link &amp; swing</div>
   <div><span class="key">R</span>reset scene</div>
   <div><span class="key">space</span>impulse on chain end</div>
+  <div id="audio-status" title="click to toggle sound">sound: on</div>
 </div>
 <div id="ts">0</div>
 <script src="https://cdn.jsdelivr.net/npm/matter-js@0.20.0/build/matter.min.js"></script>
@@ -140,20 +148,25 @@
   const LINK_H     = 20;        // link height (along chain direction)
   const LINK_GAP   = -3;        // small visual overlap so links read as continuous chain
   const ANCHOR_Y   = 50;        // top of first link (just below the cleat)
+  const BALL_R     = 26;        // wrecking ball radius
+  const BALL_DENS  = 0.3;       // wrecking ball density (much heavier than chain)
 
   // ───────────────────────── Static stage ─────────────────────────
   function buildStage() {
     Composite.clear(stageComp, false, true);
     const wallOpts = {
       isStatic: true,
+      label: 'stage',
       render: { fillStyle: '#241710', strokeStyle: '#0e0805', lineWidth: 1 }
     };
     const cleatOpts = {
       isStatic: true,
+      label: 'stage',
       render: { fillStyle: '#5a2e0d', strokeStyle: '#1a0a02', lineWidth: 2 }
     };
     const ceilingOpts = {
       isStatic: true,
+      label: 'stage',
       render: { fillStyle: '#150b06' }
     };
 
@@ -200,6 +213,7 @@
     for (let i = 0; i < N_LINKS; i++) {
       const odd = (i % 2 === 1);
       const opts = Object.assign({}, baseLink, {
+        label: 'chain-link',
         render: {
           fillStyle:   odd ? '#5a2a0c' : '#a05818',
           strokeStyle: '#1a0902',
@@ -212,6 +226,27 @@
       links.push(link);
       y += LINK_H + LINK_GAP;
     }
+
+    // Wrecking ball — heavy iron weight hanging from the last link
+    // Collision filter: collides with boxes/stage (0x0001) but NOT with chain links (0x0002)
+    const ball = Bodies.circle(
+      anchorX,
+      y + BALL_R,
+      BALL_R,
+      {
+        label: 'wrecking-ball',
+        density: BALL_DENS,
+        friction: 0.6,
+        frictionAir: 0.005,    // ball flies far, only minor air drag
+        restitution: 0.08,
+        collisionFilter: { category: 0x0001, mask: 0xFFFD }, // exclude 0x0002 (chain)
+        render: {
+          fillStyle: '#3a2818',
+          strokeStyle: '#0d0703',
+          lineWidth: 3
+        }
+      }
+    );
 
     // Constraints
     const constraints = [];
@@ -242,15 +277,28 @@
       }));
     }
 
-    Composite.add(chainComp, [...links, ...constraints]);
+    // Wrecking ball hanging from the last link
+    constraints.push(Constraint.create({
+      bodyA: links[links.length - 1],
+      pointA: { x: 0, y: LINK_H / 2 },
+      bodyB: ball,
+      pointB: { x: 0, y: -BALL_R },
+      length: 0,
+      stiffness: 0.85,
+      damping: 0.18,
+      render: { visible: false }
+    }));
+
+    Composite.add(chainComp, [...links, ball, ...constraints]);
     Composite.add(engine.world, chainComp);
-    return { links, end: links[links.length - 1] };
+    return { links, ball, end: ball };
   }
 
   // ───────────────────────── Wooden boxes (pyramid 3-2-1) ─────────────────────────
   function buildBoxes() {
     Composite.clear(boxComp, false, true);
     const woodOpts = {
+      label: 'wood-box',
       density: 0.002,
       friction: 0.85,
       frictionStatic: 1.0,
@@ -313,6 +361,186 @@
   Events.on(mouseConstraint, 'startdrag', () => document.body.classList.add('grabbing'));
   Events.on(mouseConstraint, 'enddrag',   () => document.body.classList.remove('grabbing'));
 
+  // ───────────────────────── Sound (Web Audio API) ─────────────────────────
+  // Procedural clank (metal) + thud (wood) — no audio assets needed.
+  // Browsers require a user gesture before AudioContext can play; we init lazily.
+  const audio = {
+    ctx: null,
+    enabled: false,   // true once we've successfully resumed
+    muted: false,
+    init() {
+      if (this.ctx) return;
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return;
+      this.ctx = new Ctx();
+    },
+    resume() {
+      this.init();
+      if (this.ctx && this.ctx.state === 'suspended') {
+        this.ctx.resume().then(() => { this.enabled = true; }).catch(() => {});
+      } else if (this.ctx) {
+        this.enabled = true;
+      }
+    },
+    setMuted(m) {
+      this.muted = m;
+      const el = document.getElementById('audio-status');
+      if (el) el.textContent = m ? 'sound: off' : 'sound: on';
+    },
+    // Metallic clank: short noise burst through a bandpass filter centered ~2-3 kHz
+    clank(intensity) {
+      if (this.muted || !this.ctx || !this.enabled) return;
+      const ctx = this.ctx;
+      const t0 = ctx.currentTime;
+      const dur = 0.18;
+      const buf = ctx.createBuffer(1, Math.floor(ctx.sampleRate * dur), ctx.sampleRate);
+      const data = buf.getChannelData(0);
+      for (let i = 0; i < data.length; i++) {
+        // Decaying noise (sharp attack, fast decay)
+        const env = Math.exp(-i / data.length * 8);
+        data[i] = (Math.random() * 2 - 1) * env;
+      }
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.value = 1800 + Math.random() * 1200;  // varying metal tone
+      bp.Q.value = 6;
+      const g = ctx.createGain();
+      const vol = Math.min(0.35, 0.05 + intensity * 0.04);
+      g.gain.setValueAtTime(vol, t0);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+      src.connect(bp); bp.connect(g); g.connect(ctx.destination);
+      src.start(t0);
+      src.stop(t0 + dur + 0.02);
+    },
+    // Wood thud: low-frequency sine with quick decay
+    thud(intensity) {
+      if (this.muted || !this.ctx || !this.enabled) return;
+      const ctx = this.ctx;
+      const t0 = ctx.currentTime;
+      const dur = 0.28;
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(110 + Math.random() * 40, t0);
+      osc.frequency.exponentialRampToValueAtTime(55, t0 + dur);
+      const g = ctx.createGain();
+      const vol = Math.min(0.45, 0.08 + intensity * 0.05);
+      g.gain.setValueAtTime(vol, t0);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+      osc.connect(g); g.connect(ctx.destination);
+      osc.start(t0);
+      osc.stop(t0 + dur + 0.02);
+    }
+  };
+
+  // Resume audio on the FIRST user gesture anywhere (click / key / touch)
+  const armAudio = () => { audio.resume(); window.removeEventListener('pointerdown', armAudio); window.removeEventListener('keydown', armAudio); };
+  window.addEventListener('pointerdown', armAudio, { once: false });
+  window.addEventListener('keydown', armAudio, { once: false });
+
+  // HUD: clickable sound toggle
+  const audioStatusEl = document.getElementById('audio-status');
+  if (audioStatusEl) {
+    audioStatusEl.style.pointerEvents = 'auto';
+    audioStatusEl.style.cursor = 'pointer';
+    audioStatusEl.addEventListener('click', (e) => {
+      e.stopPropagation();
+      audio.resume();
+      audio.setMuted(!audio.muted);
+    });
+  }
+
+  // ───────────────────────── Dust particle system ─────────────────────────
+  // Lightweight custom particles (NOT physics bodies) drawn via afterRender hook.
+  // Spawned on impact; updated each frame; auto-removed when life <= 0.
+  const particles = [];
+  function spawnDust(x, y, count, intensity) {
+    for (let i = 0; i < count; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const speed = (0.8 + Math.random() * 1.6) * Math.max(0.4, intensity * 0.4);
+      particles.push({
+        x, y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed - (1.2 + Math.random() * 1.5),  // upward bias
+        life: 1.0,
+        decay: 0.55 + Math.random() * 0.5,                          // 0.55-1.05s
+        size: 1.6 + Math.random() * 2.6,
+        // tan/wood-dust palette
+        r: 165 + Math.floor(Math.random() * 35),
+        g: 135 + Math.floor(Math.random() * 30),
+        b: 95  + Math.floor(Math.random() * 25)
+      });
+    }
+  }
+
+  // Step particles by `dt` seconds; remove dead ones
+  function stepParticles(dt) {
+    for (let i = particles.length - 1; i >= 0; i--) {
+      const p = particles[i];
+      p.x  += p.vx * dt * 60;
+      p.y  += p.vy * dt * 60;
+      p.vy += 55 * dt;          // gravity (canvas +y is down)
+      p.vx *= 0.94;
+      p.life -= dt / p.decay;
+      if (p.life <= 0 || p.y > window.innerHeight + 20) particles.splice(i, 1);
+    }
+  }
+
+  function drawParticles(ctx) {
+    if (particles.length === 0) return;
+    for (const p of particles) {
+      const a = Math.max(0, Math.min(1, p.life)) * 0.55;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(${p.r}, ${p.g}, ${p.b}, ${a.toFixed(3)})`;
+      ctx.fill();
+    }
+  }
+
+  // Wire dust + sound to collisions
+  Events.on(engine, 'collisionStart', (event) => {
+    for (const pair of event.pairs) {
+      const a = pair.bodyA, b = pair.bodyB;
+      // Approximate impact magnitude from relative velocity & mass
+      const rvx = (a.velocity.x - b.velocity.x);
+      const rvy = (a.velocity.y - b.velocity.y);
+      const relV = Math.hypot(rvx, rvy);
+      if (relV < 0.6) continue;  // skip micro-contacts
+      const la = a.label, lb = b.label;
+      const isMetalA = (la === 'chain-link' || la === 'wrecking-ball');
+      const isMetalB = (lb === 'chain-link' || lb === 'wrecking-ball');
+      const isWoodA  = (la === 'wood-box');
+      const isWoodB  = (lb === 'wood-box');
+
+      // Sound routing
+      if (isMetalA && isWoodB) audio.clank(relV);
+      else if (isMetalB && isWoodA) audio.clank(relV);
+      else if (isWoodA || isWoodB) audio.thud(relV);
+
+      // Dust at contact point — only on high-velocity wood impacts
+      if (relV > 1.5 && (isWoodA || isWoodB)) {
+        const cx = (a.position.x + b.position.x) / 2;
+        const cy = (a.position.y + b.position.y) / 2;
+        const count = Math.min(14, 4 + Math.floor(relV * 2));
+        spawnDust(cx, cy, count, relV);
+      }
+    }
+  });
+
+  // Draw dust on top of physics each frame
+  let _lastT = performance.now();
+  Events.on(render, 'afterRender', () => {
+    const now = performance.now();
+    const dt = Math.min(0.05, (now - _lastT) / 1000);
+    _lastT = now;
+    stepParticles(dt);
+    drawParticles(render.context);
+  });
+
+  // Expose particle count for tests
+  window.__particles = () => particles.length;
+
   // ───────────────────────── World state + controls ─────────────────────────
   let chain = buildChain();
   buildStage();
@@ -353,10 +581,12 @@
   // ───────────────────────── Diagnostics on load (smoke check) ─────────────────────────
   // Quiet — no console.log spam; dev can inspect `window.__sim` if needed.
   window.__sim = {
-    engine, render, chain, mouseConstraint,
+    engine, render, chain, mouseConstraint, audio,
     bodies: () => Composite.allBodies(engine.world).length,
     constraints: () => Composite.allConstraints(engine.world).length,
     chainEnd: () => chain && chain.end ? chain.end.position : null,
+    chainEndLabel: () => chain && chain.end ? chain.end.label : null,
+    ball: () => chain && chain.ball ? { x: chain.ball.position.x, y: chain.ball.position.y, label: chain.ball.label } : null,
     boxBodies: () => boxComp.bodies.map(b => ({
       x: +b.position.x.toFixed(2), y: +b.position.y.toFixed(2),
       a: +b.angle.toFixed(3),
@@ -370,7 +600,9 @@
         totalKE += 0.5 * link.mass * (link.velocity.x ** 2 + link.velocity.y ** 2);
       }
       return +totalKE.toFixed(4);
-    }
+    },
+    particles: () => particles.length,
+    audioStatus: () => ({ enabled: audio.enabled, muted: audio.muted })
   };
 })();
 </script>
