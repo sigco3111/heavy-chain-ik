@@ -6,7 +6,7 @@
 
 ## 🎬 라이브 데모
 
-> **👉 [https://heavy-chain-ik.vercel.app/](https://heavy-chain-ik.vercel.app/)** — 브라우저에서 바로 실행 (Matter.js 기반)
+> **👉 [https://sigco3111.github.io/heavy-chain-ik/](https://sigco3111.github.io/heavy-chain-ik/)** — 브라우저에서 바로 실행 (Matter.js 기반)
 
 | | |
 |---|---|
@@ -195,8 +195,8 @@ localStorage.setItem('heavy-chain-ik.lang', currentLang);
 
 ## 🔬 검증
 
-- ✅ **bit-perfect 사이즈**: `curl https://heavy-chain-ik.vercel.app/` = 26,579B ≡ `wc -c < index.html` = 26,579B
-- ✅ **alias HTTP 200**: `https://heavy-chain-ik.vercel.app/` 200 OK
+- ✅ **bit-perfect 사이즈**: `curl https://sigco3111.github.io/heavy-chain-ik/` = 26,579B ≡ `wc -c < index.html` = 26,579B
+- ✅ **alias HTTP 200**: `https://sigco3111.github.io/heavy-chain-ik/` 200 OK
 - ✅ **Matter.js CDN 도달**: `https://cdn.jsdelivr.net/npm/matter-js@0.19.0/build/matter.min.js` HTTP/2 200
 - ✅ **콘솔 에러 0개**: 페이지 로드 후 Chrome DevTools에서 검증
 - ✅ **i18n 토글 작동**: L 키 → 한국어 ↔ English 즉시 전환, 새로 고침 후 유지
