@@ -10,7 +10,7 @@
 
 | | |
 |---|---|
-| ![Demo](https://img.shields.io/badge/Live-Demo-7C3AED?style=for-the-badge&logo=vercel&logoColor=white) | [![Repo](https://img.shields.io/badge/GitHub-sigco3111%2Fheavy--chain--ik-181717?style=for-the-badge&logo=github&logoColor=white)](https://github.com/sigco3111/heavy-chain-ik) |
+| ![Demo](https://img.shields.io/badge/Live-Demo-222222?style=for-the-badge&logo=githubpages&logoColor=white) | [![Repo](https://img.shields.io/badge/GitHub-sigco3111%2Fheavy--chain--ik-181717?style=for-the-badge&logo=github&logoColor=white)](https://github.com/sigco3111/heavy-chain-ik) |
 | ![Status](https://img.shields.io/badge/Status-Live-22C55E?style=flat-square) | ![Stack](https://img.shields.io/badge/Stack-Matter.js-F7DF1E?style=flat-square&logo=javascript&logoColor=black) |
 | ![License](https://img.shields.io/badge/License-MIT-F1C40F?style=flat-square) | ![Deps](https://img.shields.io/badge/Dependencies-1_CDN-9CA3AF?style=flat-square) |
 
@@ -69,7 +69,7 @@ density/friction to simulate the heavy "rusty" feel. 모든 의존관계의 코�
 ## 🚀 실행 방법
 
 ### 방법 1: 라이브 데모 (가장 간단)
-위 [라이브 데모](#-라이브-데모) 섹션의 Vercel URL 클릭 → 별도 설치 없이 바로 확인
+위 [라이브 데모](#-라이브-데모) 섹션의 GitHub Pages URL 클릭 → 별도 설치 없이 바로 확인
 
 ### 방법 2: 브라우저로 직접 열기
 ```bash
@@ -121,7 +121,7 @@ heavy-chain-ik/
 ├── index.html      # 단일 HTML (모든 코드 포함, Matter.js CDN 1개)
 ├── README.md       # 한국어 (기본)
 ├── LICENSE         # MIT
-└── vercel.json     # Vercel 정적 호스팅 설정
+└── vercel.json     # Vercel 정적 호스팅 설정 (gh-pages에서도 무해 — 그대로 보존)
 ```
 
 ---
@@ -137,7 +137,7 @@ heavy-chain-ik/
 | **사운드** | Web Audio API 절차적 합성 | 외부 오디오 파일 0개, MP3 의존성 제거 |
 | **파티클** | Canvas 직접 그리기 (Matter body 아님) | 충돌 속도 임계값 기반 분출, 시각적 임팩트 ↑ |
 | **다국어** | L 키 빌트인 토글 + localStorage | 별도 URL 없이 즉시 전환, 사용자 부담 0 |
-| **호스팅** | Vercel (raw alias) | GitHub Pages 대비 자동 HTTPS + 글로벌 CDN |
+| **호스팅** | GitHub Pages | main push → gh-pages 자동 배포 (Vercel alias → GitHub Pages 전환 2026-08) |
 
 ### 직접 커스터마이즈하고 싶다면
 
@@ -196,7 +196,7 @@ localStorage.setItem('heavy-chain-ik.lang', currentLang);
 ## 🔬 검증
 
 - ✅ **bit-perfect 사이즈**: `curl https://sigco3111.github.io/heavy-chain-ik/` = 26,579B ≡ `wc -c < index.html` = 26,579B
-- ✅ **alias HTTP 200**: `https://sigco3111.github.io/heavy-chain-ik/` 200 OK
+- ✅ **라이브 HTTP 200**: `https://sigco3111.github.io/heavy-chain-ik/` 200 OK
 - ✅ **Matter.js CDN 도달**: `https://cdn.jsdelivr.net/npm/matter-js@0.19.0/build/matter.min.js` HTTP/2 200
 - ✅ **콘솔 에러 0개**: 페이지 로드 후 Chrome DevTools에서 검증
 - ✅ **i18n 토글 작동**: L 키 → 한국어 ↔ English 즉시 전환, 새로 고침 후 유지
